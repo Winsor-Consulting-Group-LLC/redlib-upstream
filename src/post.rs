@@ -24,6 +24,7 @@ struct PostTemplate {
 	url: String,
 	url_without_query: String,
 	comment_query: String,
+	comments_unavailable: bool,
 }
 
 static COMMENT_SEARCH_CAPTURE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\?q=(.*)&type=comment").unwrap());
@@ -95,6 +96,7 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 				single_thread,
 				url: req_url,
 				comment_query: query,
+				comments_unavailable: false,
 			}))
 		}
 		// If the Reddit API returns an error, exit and send error page to user
@@ -102,11 +104,47 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 			if msg == "quarantined" || msg == "gated" {
 				let sub = req.param("sub").unwrap_or_default();
 				Ok(quarantine(&req, sub, &msg))
+			} else if msg.starts_with("Failed to parse page JSON data") {
+				post_without_comments(req, quarantined, sort, msg).await
 			} else {
 				error(req, &msg).await
 			}
 		}
 	}
+}
+
+/// Reddit refuses the comments endpoint to logged-out clients (since 2026-10-22 its edge answers with a 403 HTML
+/// page where the JSON should be), but `/by_id` still serves the post itself. Render the post alone, with a link to
+/// the thread on Reddit; if that fails too, show the original error.
+async fn post_without_comments(req: Request<Body>, quarantined: bool, sort: String, msg: String) -> Result<Response<Body>, String> {
+	let id = req.param("id").unwrap_or_default();
+	if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+		return error(req, &msg).await;
+	}
+
+	let listing = match json(format!("/by_id/t3_{id}.json?raw_json=1"), quarantined).await {
+		Ok(response) if response["data"]["children"][0]["data"]["id"].is_string() => response,
+		_ => return error(req, &msg).await,
+	};
+	let post = parse_post(&listing["data"]["children"][0]).await;
+
+	let req_url = req.uri().to_string();
+	if post.nsfw && crate::utils::should_be_nsfw_gated(&req, &req_url) {
+		return Ok(nsfw_landing(req, req_url).await.unwrap_or_default());
+	}
+
+	Ok(template(&PostTemplate {
+		comments: Vec::new(),
+		post,
+		url_without_query: req_url.clone(),
+		sort,
+		prefs: Preferences::new(&req),
+		// The title block reads comments[0] on a single-thread page, and there are no comments to read.
+		single_thread: false,
+		url: req_url,
+		comment_query: String::new(),
+		comments_unavailable: true,
+	}))
 }
 
 // COMMENTS
@@ -250,5 +288,46 @@ fn build_comment(
 		is_filtered,
 		more_count,
 		prefs: Preferences::new(req),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[tokio::test(flavor = "multi_thread")]
+	async fn comments_unavailable_renders_notice_and_reddit_link() {
+		let listing = serde_json::json!({
+			"kind": "t3",
+			"data": {
+				"id": "abc123",
+				"title": "Hello",
+				"subreddit": "test",
+				"author": "someone",
+				"permalink": "/r/test/comments/abc123/hello/",
+				"is_self": true,
+				"selftext": "body",
+				"num_comments": 42,
+				"created_utc": 1_700_000_000.0
+			}
+		});
+		let post = parse_post(&listing).await;
+		let html = PostTemplate {
+			comments: Vec::new(),
+			post,
+			sort: String::new(),
+			prefs: Preferences::default(),
+			single_thread: false,
+			url: "/r/test/comments/abc123/hello/".to_string(),
+			url_without_query: "/r/test/comments/abc123/hello/".to_string(),
+			comment_query: String::new(),
+			comments_unavailable: true,
+		}
+		.render()
+		.unwrap();
+
+		assert!(html.contains("Comments are currently unavailable due to a Reddit policy change."));
+		assert!(html.contains(r#"href="https://www.reddit.com/r/test/comments/abc123/hello/""#));
+		assert!(!html.contains("commentSortSelect"), "the sort and search forms are hidden");
 	}
 }

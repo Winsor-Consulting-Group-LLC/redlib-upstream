@@ -51,6 +51,9 @@
 	<div id="column_one">
 		{% call utils::post(post) %}
 
+		{% if comments_unavailable %}
+		<p class="comments_unavailable">Comments are currently unavailable due to a Reddit policy change. <a href="https://www.reddit.com{{ post.permalink }}">View the thread on Reddit</a></p>
+		{% else %}
 		<!-- SORT FORM -->
        <div id="commentQueryForms">
 		<form id="sort">
@@ -78,6 +81,7 @@
       Comments containing "{{ comment_query }}"&nbsp;|&nbsp;<a id="allCommentsLink" href="{{ url_without_query }}">All comments</a>
       {% endif %}
       </div>
+		{% endif %}
 
 		<!-- COMMENTS -->
 		{% for c in comments -%}

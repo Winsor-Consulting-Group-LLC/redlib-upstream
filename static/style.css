@@ -968,6 +968,15 @@ a.search_subreddit:hover {
     margin: 10px 0;
 }
 
+.comments_unavailable {
+    margin: 20px 0;
+}
+
+.comments_unavailable a {
+    color: var(--accent);
+    font-weight: bold;
+}
+
 .post {
     border-radius: 5px;
     background: var(--post);

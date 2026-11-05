@@ -77,14 +77,19 @@ pub fn build_client() -> WreqClient {
 	// Keeping this list short to aid in privacy.
 	// The more emulations, the more unique a fingerprint each instance has.
 	// But some emulations should increase evasiveness.
-	let emulation = [Profile::Chrome145, Profile::Firefox147];
-	let emulation_platform = [Platform::Android, Platform::Windows];
+	//
+	// Reddit refuses anonymous JSON to Chrome 132+, Edge 135+ (October 2026) and every Firefox (November 2026),
+	// which covered both of v0.40.0's choices (Chrome145, Firefox147). These still pass, per the probes recorded
+	// in Nachtalb/redlib commits a06901c and 02d75b4. Pairs, so a profile only gets a platform it ships on.
+	let emulation = [
+		(Profile::Chrome131, Platform::Windows),
+		(Profile::Chrome131, Platform::Android),
+		(Profile::Edge134, Platform::Windows),
+		(Profile::Safari26_2, Platform::MacOS),
+	];
 
-	let rand = fastrand::usize(..);
-	let emulation = Emulation::builder()
-		.profile(emulation[rand % emulation.len()])
-		.platform(emulation_platform[rand % emulation_platform.len()])
-		.build();
+	let (profile, platform) = emulation[fastrand::usize(..emulation.len())];
+	let emulation = Emulation::builder().profile(profile).platform(platform).build();
 
 	info!("Building Wreq client with random emulation");
 	WreqClient::builder()
